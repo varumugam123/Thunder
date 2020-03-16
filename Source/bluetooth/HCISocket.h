@@ -546,11 +546,15 @@ namespace Bluetooth {
                 _buffer[1] = (OPCODE & 0xFF);
                 _buffer[2] = ((OPCODE >> 8) & 0xFF);
                 _buffer[3] = static_cast<uint8_t>(sizeof(OUTBOUND));
+
+                ::memset(&_response, 0, sizeof(_response));
             }
-            CommandType(const CommandType<OPCODE, OUTBOUND, INBOUND, RESPONSECODE>& copy) 
+            CommandType(const CommandType<OPCODE, OUTBOUND, INBOUND, RESPONSECODE>& copy)
                 : _offset(copy._offset)
-                , _error(~0) {
-                ::memcpy (_buffer, copy._buffer, sizeof(_buffer));
+                , _error(~0)
+            {
+                ::memcpy(_buffer, copy._buffer, sizeof(_buffer));
+                ::memcpy(&_response, &copy._response, sizeof(_response));
             }
             virtual ~CommandType()
             {
@@ -577,8 +581,8 @@ namespace Bluetooth {
                     ::memcpy(stream, &(_buffer[_offset]), result);
                     _offset += result;
 
-                    // printf ("SEND: ");
-                    // for (uint16_t loop = 0; loop < result; loop++) { printf("%02X:", stream[loop]); } printf("\n");
+                    //printf("SEND: ");cfor (uint16_t loop = 0; loop < result; loop++) { printf("%02X:", stream[loop]); } printf("\n");
+                    printf(_T("HCI command: %X:%03X\n"), cmd_opcode_ogf(OPCODE), cmd_opcode_ocf(OPCODE));
                 }
                 return (result);
             }
@@ -604,55 +608,62 @@ namespace Bluetooth {
                     const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&(stream[1 + HCI_EVENT_HDR_SIZE]));
                     uint16_t len = (length - (1 + HCI_EVENT_HDR_SIZE));
 
-                    // printf ("RECEIVE: ");
-                    // for (uint16_t loop = 0; loop < length; loop++) { printf("%02X:", stream[loop]); } printf("\n");
+                    //printf("RECEIVE: "); for (uint16_t loop = 0; loop < length; loop++) { printf("%02X:", stream[loop]); } printf("\n");
 
                     if (hdr->evt == EVT_CMD_STATUS) {
                         const evt_cmd_status* cs = reinterpret_cast<const evt_cmd_status*>(ptr);
-                        if (htobs(cs->opcode) == OPCODE) {
+                        if (btohs(cs->opcode) == OPCODE) {
+                            printf(_T("HCI command status: %X:%03X Status=%d\n"),
+                                      cmd_opcode_ogf(cs->opcode), cmd_opcode_ocf(cs->opcode), cs->status);
+
                             if (cs->status == 0) {
-                                // See if we are waiting for an LE subevent...
+                                // See if we are waiting for an event...
                                 if (RESPONSECODE == static_cast<uint8_t>(~0)) {
                                     _error = Core::ERROR_NONE;
                                 }
                             }
                             else {
                                 _error =  Core::ERROR_GENERAL;
-                                printf(_T(">>EVT_CMD_STATUS: %X-%03X Error: %d\n"), (cs->opcode >> 10) & 0xF, (cs->opcode & 0x3FF), cs->status);
                             }
                             result = length;
                         }
                     } else if (hdr->evt == EVT_CMD_COMPLETE) {
                         const evt_cmd_complete* cc = reinterpret_cast<const evt_cmd_complete*>(ptr);
-                        if (htobs(cc->opcode) == OPCODE) {
+                        if (btohs(cc->opcode) == OPCODE) {
+                            printf(_T("HCI command complete: %X:%03X %s\n"),
+                                      cmd_opcode_ogf(cc->opcode), cmd_opcode_ocf(cc->opcode), len <= EVT_CMD_COMPLETE_SIZE? "FAILURE" : "");
+
                             if (len <= EVT_CMD_COMPLETE_SIZE) {
                                 _error = Core::ERROR_GENERAL;
-                                printf(_T(">>EVT_CMD_COMPLETED: %X-%03X Error: %d\n"), (cc->opcode >> 10) & 0xF, (cc->opcode & 0x3FF), _error);
                             } else {
-                                // See if we are waiting for an LE subevent...
+                                // See if we are waiting for an event...
                                 if (RESPONSECODE == static_cast<uint8_t>(~0)) {
                                     _error = Core::ERROR_NONE;
-                                    uint16_t toCopy = std::min(static_cast<uint16_t>(sizeof(INBOUND)), static_cast<uint16_t>(len - EVT_CMD_COMPLETE_SIZE));
-                                    ::memcpy(reinterpret_cast<uint8_t*>(&_response), &(ptr[EVT_CMD_COMPLETE_SIZE]), toCopy);
+                                    uint16_t toCopy = std::min(static_cast<uint16_t>(sizeof(_response)), static_cast<uint16_t>(len - EVT_CMD_COMPLETE_SIZE));
+                                    ::memcpy(&_response, &(ptr[EVT_CMD_COMPLETE_SIZE]), toCopy);
                                 }
                             }
                             result = length;
                         }
-                    } else if ((hdr->evt == EVT_LE_META_EVENT) && (((OPCODE >> 10) & 0x3F) == OGF_LE_CTL)) {
+                    } else if ((hdr->evt == EVT_LE_META_EVENT) && (cmd_opcode_ogf(OPCODE) == OGF_LE_CTL)) {
                         const evt_le_meta_event* eventMetaData = reinterpret_cast<const evt_le_meta_event*>(ptr);
 
                         if (eventMetaData->subevent == RESPONSECODE) {
-                            uint16_t toCopy = std::min(static_cast<uint16_t>(sizeof(INBOUND)), static_cast<uint16_t>(len - EVT_LE_META_EVENT_SIZE));
-                            ::memcpy(reinterpret_cast<uint8_t*>(&_response), &(ptr[EVT_LE_META_EVENT_SIZE]), toCopy);
-
+                            uint16_t toCopy = std::min(static_cast<uint16_t>(sizeof(_response)), static_cast<uint16_t>(len - EVT_LE_META_EVENT_SIZE));
+                            ::memcpy(&_response, &(ptr[EVT_LE_META_EVENT_SIZE]), toCopy);
                             _error = Core::ERROR_NONE;
                             result = length;
                         }
+                    } else if (hdr->evt == RESPONSECODE) {
+                        ::memcpy(&_response, ptr, std::min(static_cast<uint16_t>(sizeof(_response)), len));
+                        _error = Core::ERROR_NONE;
+                        result = length;
+                    } else {
+                        printf("DUPA %i\n", hdr->evt);
                     }
                 }
                 return (result);
             }
-
 
         private:
             mutable uint16_t _offset;
@@ -757,7 +768,7 @@ namespace Bluetooth {
             typedef CommandType<cmd_opcode_pack(OGF_LE_CTL, OCF_LE_START_ENCRYPTION), le_start_encryption_cp, uint8_t>
                 EncryptLE;
 
-            typedef CommandType<cmd_opcode_pack(OGF_LE_CTL, OCF_REMOTE_NAME_REQ), remote_name_req_cp, evt_remote_name_req_complete>
+            typedef CommandType<cmd_opcode_pack(OGF_LINK_CTL, OCF_REMOTE_NAME_REQ), remote_name_req_cp, Core::Void>
                 RemoteName;
 
             typedef CommandType<cmd_opcode_pack(OGF_LE_CTL, OCF_LE_SET_SCAN_PARAMETERS), le_set_scan_parameters_cp, uint8_t>

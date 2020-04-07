@@ -496,6 +496,7 @@ public:
         std::string bufferId;
         OCDM::ISession* realSession = nullptr;
 
+        accessor->AddRef();
         accessor->CreateSession(system->keySystem(), licenseType, initDataType, pbInitData,
             cbInitData, pbCustomData, cbCustomData, &_sink,
             _sessionId, realSession);

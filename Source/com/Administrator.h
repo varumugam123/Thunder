@@ -46,9 +46,10 @@ namespace RPC {
         Administrator(const Administrator&) = delete;
         Administrator& operator=(const Administrator&) = delete;
 
+        typedef std::list<std::pair<uint32_t, Core::IUnknown*>> StubList;
         typedef std::list<ProxyStub::UnknownProxy*> ProxyList;
         typedef std::map<const Core::IPCChannel*, ProxyList> ChannelMap;
-        typedef std::map<const Core::IPCChannel*, std::list< std::pair<uint32_t, Core::IUnknown*> > > ReferenceMap;
+        typedef std::map<const Core::IPCChannel*, StubList> ReferenceMap;
 
         struct EXTERNAL IMetadata {
             virtual ~IMetadata(){};
@@ -145,12 +146,14 @@ namespace RPC {
             RegisterUnknownInterface(channel, Convert(source, id), id);
         }
 
+        bool StubFind(const Core::ProxyType<Core::IPCChannel>& channel, Core::ProxyType<InvokeMessage>& message);
+
         void UnregisterInterface(Core::ProxyType<Core::IPCChannel>& channel, const Core::IUnknown* source, const uint32_t interfaceId)
         {
             ReferenceMap::iterator index(_channelReferenceMap.find(channel.operator->()));
 
             if (index != _channelReferenceMap.end()) {
-                std::list< std::pair<uint32_t, Core::IUnknown*> >::iterator element(index->second.begin());
+                StubList::iterator element(index->second.begin());
 
                 while ( (element != index->second.end()) && ((element->first != interfaceId) || (element->second != source)) ) {
                     element++;
